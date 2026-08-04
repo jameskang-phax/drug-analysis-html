@@ -2,8 +2,16 @@
 <html lang="zh-Hant">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>藥物分析工作站</title>
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#0b2e28">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="藥物分析">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <style>
   :root {
@@ -49,6 +57,11 @@
   }
   header h1 { font-size: 19px; font-weight: 500; margin: 0; letter-spacing: 0.3px; }
   header p { margin: 2px 0 0; font-size: 12.5px; color: #b7d6cd; }
+  .install-btn {
+    background: var(--coral-600); color: #fff; border: none; border-radius: 9px;
+    padding: 9px 16px; font-size: 13px; font-weight: 500; cursor: pointer;
+  }
+  .install-btn:hover { background: #a8531f; }
   main { max-width: 980px; margin: 0 auto; padding: 32px 24px 64px; }
 
   .step-label {
@@ -178,6 +191,7 @@
       <p>麻豆新樓醫院藥劑科 · 抗生素使用分析月報整理工具</p>
     </div>
   </div>
+  <button id="installBtn" class="install-btn hidden">安裝為 App</button>
 </header>
 
 <main>
@@ -502,6 +516,30 @@ document.getElementById('downloadBtn').addEventListener('click', () => {
   });
 
   XLSX.writeFile(outWb, 'drug-analysis-' + month + '.xlsx');
+});
+
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('service-worker.js').catch(() => {});
+  });
+}
+
+let deferredInstallPrompt = null;
+const installBtn = document.getElementById('installBtn');
+window.addEventListener('beforeinstallprompt', e => {
+  e.preventDefault();
+  deferredInstallPrompt = e;
+  installBtn.classList.remove('hidden');
+});
+installBtn.addEventListener('click', async () => {
+  if (!deferredInstallPrompt) return;
+  deferredInstallPrompt.prompt();
+  await deferredInstallPrompt.userChoice;
+  deferredInstallPrompt = null;
+  installBtn.classList.add('hidden');
+});
+window.addEventListener('appinstalled', () => {
+  installBtn.classList.add('hidden');
 });
 </script>
 
