@@ -412,20 +412,29 @@ function processDrugAnalysisWorkbook(wb) {
     return;
   }
   const codeIdx = header.indexOf('計價項');
+  const doseIdx = header.indexOf('總劑量');
+  const amtIdx = header.indexOf('總額');
 
+  // 依「計價項」純加總（不再細分科別/醫師），每個藥品代碼在該來源下只出現一列
   const bySource = {};
   SOURCES.forEach(src => {
-    const filtered = rows.filter(r => r[sourceIdx] === src);
-    filtered.sort((a, b) => String(a[codeIdx] || '').localeCompare(String(b[codeIdx] || '')));
-    bySource[src] = filtered;
+    const agg = {};
+    rows.filter(r => r[sourceIdx] === src).forEach(r => {
+      const code = r[codeIdx] || '';
+      const dose = typeof r[doseIdx] === 'number' ? r[doseIdx] : 0;
+      const amt = typeof r[amtIdx] === 'number' ? r[amtIdx] : 0;
+      if (!agg[code]) agg[code] = { code, dose: 0, amt: 0 };
+      agg[code].dose += dose;
+      agg[code].amt += amt;
+    });
+    bySource[src] = Object.values(agg).sort((a, b) => a.code.localeCompare(b.code));
   });
 
   state.detailHeader = wb.SheetNames.includes(DETAIL_SHEET) ? sheetToRows(wb.Sheets[DETAIL_SHEET])[0] : null;
   state.detailRows = wb.SheetNames.includes(DETAIL_SHEET) ? sheetToRows(wb.Sheets[DETAIL_SHEET]).slice(1) : null;
-  state.summaryHeader = header;
   state.bySource = bySource;
 
-  renderResults(header);
+  renderResults();
   resultSection.classList.remove('hidden');
   downloadSection.classList.remove('hidden');
 
@@ -439,46 +448,38 @@ function fmt(n) {
   return Number.isInteger(n) ? n.toLocaleString() : n.toLocaleString(undefined, { maximumFractionDigits: 2 });
 }
 
-function sumCol(rows, header, colName) {
-  const idx = header.indexOf(colName);
-  if (idx === -1) return 0;
-  return rows.reduce((s, r) => s + (typeof r[idx] === 'number' ? r[idx] : 0), 0);
+function sourceTotals(rows) {
+  return rows.reduce((acc, r) => {
+    acc.dose += r.dose;
+    acc.amt += r.amt;
+    return acc;
+  }, { dose: 0, amt: 0 });
 }
 
-function renderResults(header) {
+function renderResults() {
   const map = { '門診': 'opd', '住院': 'ipd', '急診': 'er' };
   SOURCES.forEach(src => {
     const rows = state.bySource[src];
     const prefix = map[src];
-    document.getElementById(prefix + 'Count').textContent = rows.length.toLocaleString() + ' 筆';
-    document.getElementById(prefix + 'Dose').textContent = fmt(sumCol(rows, header, '總劑量'));
-    document.getElementById(prefix + 'Amt').textContent = fmt(sumCol(rows, header, '總額'));
+    const totals = sourceTotals(rows);
+    document.getElementById(prefix + 'Count').textContent = rows.length.toLocaleString() + ' 項藥品';
+    document.getElementById(prefix + 'Dose').textContent = fmt(totals.dose);
+    document.getElementById(prefix + 'Amt').textContent = fmt(totals.amt);
   });
   renderPreview('門診');
 }
 
 function renderPreview(src) {
-  const header = state.summaryHeader;
   const rows = state.bySource[src];
   const head = document.getElementById('previewHead');
   const body = document.getElementById('previewBody');
-  head.innerHTML = header.map(h => '<th>' + (h ?? '') + '</th>').join('');
-  const rowsHtml = rows.slice(0, 200).map(r =>
-    '<tr>' + header.map((h, i) => '<td>' + (r[i] ?? '') + '</td>').join('') + '</tr>'
+  head.innerHTML = '<th>計價項</th><th>總劑量</th><th>總額</th>';
+  const rowsHtml = rows.map(r =>
+    '<tr><td>' + r.code + '</td><td>' + fmt(r.dose) + '</td><td>' + fmt(r.amt) + '</td></tr>'
   ).join('');
-  const totalRow = buildTotalRowHtml(header, rows, src);
+  const totals = sourceTotals(rows);
+  const totalRow = '<tr><td>' + src + ' 總計</td><td>' + fmt(totals.dose) + '</td><td>' + fmt(totals.amt) + '</td></tr>';
   body.innerHTML = rowsHtml + totalRow;
-}
-
-function buildTotalRowHtml(header, rows, src) {
-  const dose = sumCol(rows, header, '總劑量');
-  const amt = sumCol(rows, header, '總額');
-  return '<tr>' + header.map((h) => {
-    if (h === '計價項') return '<td>' + src + ' 小計</td>';
-    if (h === '總劑量') return '<td>' + fmt(dose) + '</td>';
-    if (h === '總額') return '<td>' + fmt(amt) + '</td>';
-    return '<td></td>';
-  }).join('') + '</tr>';
 }
 
 document.querySelectorAll('.tab').forEach(tab => {
@@ -500,17 +501,13 @@ document.getElementById('downloadBtn').addEventListener('click', () => {
   }
 
   SOURCES.forEach(src => {
-    const header = state.summaryHeader;
     const rows = state.bySource[src];
-    const dose = sumCol(rows, header, '總劑量');
-    const amt = sumCol(rows, header, '總額');
-    const totalRow = header.map(h => {
-      if (h === '計價項') return src + ' 小計';
-      if (h === '總劑量') return dose;
-      if (h === '總額') return amt;
-      return null;
-    });
-    const data = [header, ...rows, totalRow];
+    const totals = sourceTotals(rows);
+    const data = [
+      ['計價項', '總劑量', '總額'],
+      ...rows.map(r => [r.code, r.dose, r.amt]),
+      [src + ' 總計', totals.dose, totals.amt]
+    ];
     const ws = XLSX.utils.aoa_to_sheet(data);
     XLSX.utils.book_append_sheet(outWb, ws, src + '藥品使用分析總計');
   });
