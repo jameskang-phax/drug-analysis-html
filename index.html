@@ -152,6 +152,18 @@
     background: var(--rose-100); color: #7a2a53; border-radius: 10px; padding: 12px 16px;
     font-size: 13px;
   }
+  .typebadge {
+    border-radius: 10px; padding: 12px 16px; font-size: 13px; display: flex;
+    align-items: flex-start; gap: 10px;
+  }
+  .typebadge.ok { background: var(--teal-100); color: var(--teal-900); }
+  .typebadge.unknown { background: var(--coral-100); color: #7a3410; }
+  .typebadge .dot {
+    width: 8px; height: 8px; border-radius: 50%; margin-top: 5px; flex-shrink: 0;
+  }
+  .typebadge.ok .dot { background: var(--teal-500); }
+  .typebadge.unknown .dot { background: var(--coral-600); }
+  .typebadge .sheetlist { font-family: var(--mono); font-size: 12px; opacity: 0.85; margin-top: 3px; }
   .hidden { display: none; }
   footer { text-align: center; color: var(--ink-soft); font-size: 12px; padding: 24px; }
 </style>
@@ -187,6 +199,7 @@
       <button id="clearBtn">移除</button>
     </div>
 
+    <div id="typeBadge" class="typebadge hidden" style="margin-top:12px;"></div>
     <div id="errorBox" class="error hidden" style="margin-top:12px;"></div>
   </section>
 
@@ -291,10 +304,34 @@ fileInput.addEventListener('change', e => {
 });
 clearBtn.addEventListener('click', resetAll);
 
+const typeBadge = document.getElementById('typeBadge');
+
+/*
+ * 報表類型註冊表
+ * 每新增一種報表格式，只要在這裡加入一個 handler 物件即可，
+ * 不需要更動上傳、辨識、錯誤處理等其他邏輯。
+ *
+ * handler 物件格式：
+ *   id       唯一識別碼
+ *   label    顯示給使用者的名稱
+ *   detect(wb)   回傳 true/false，判斷這個工作簿是否屬於此類型
+ *   process(wb)  實際處理邏輯，處理完成後負責更新畫面
+ */
+const REPORT_TYPES = [
+  {
+    id: 'drug-analysis-summary',
+    label: '藥品使用分析月報（門診/住院/急診）',
+    detect: wb => wb.SheetNames.includes(SUMMARY_SHEET),
+    process: processDrugAnalysisWorkbook
+  }
+  // 之後有新的報表類型，依照上面格式在這個陣列裡新增一項即可
+];
+
 function resetAll() {
   fileInput.value = '';
   filerow.classList.add('hidden');
   errorBox.classList.add('hidden');
+  typeBadge.classList.add('hidden');
   resultSection.classList.add('hidden');
   downloadSection.classList.add('hidden');
   state = { detailRows: null, detailHeader: null, summaryHeader: null, bySource: {} };
@@ -307,8 +344,26 @@ function showError(msg) {
   downloadSection.classList.add('hidden');
 }
 
+function renderTypeBadge(matchedType, wb) {
+  typeBadge.classList.remove('hidden');
+  if (matchedType) {
+    typeBadge.className = 'typebadge ok';
+    typeBadge.innerHTML = '<span class="dot"></span><div>已辨識為：<b>' + matchedType.label + '</b></div>';
+  } else {
+    typeBadge.className = 'typebadge unknown';
+    typeBadge.innerHTML = '<span class="dot"></span><div>' +
+      '目前還不支援這種報表格式，先無法自動整理。' +
+      '<div class="sheetlist">偵測到的工作表：' + wb.SheetNames.join('、') + '</div>' +
+      '<div style="margin-top:4px;">把這個檔案的格式告訴我（Claude），我可以幫工作站加上對應的處理規則。</div>' +
+      '</div>';
+  }
+}
+
 function handleFile(file) {
   errorBox.classList.add('hidden');
+  typeBadge.classList.add('hidden');
+  resultSection.classList.add('hidden');
+  downloadSection.classList.add('hidden');
   fileName.textContent = file.name;
   filerow.classList.remove('hidden');
 
@@ -317,7 +372,11 @@ function handleFile(file) {
     try {
       const data = new Uint8Array(e.target.result);
       const wb = XLSX.read(data, { type: 'array' });
-      processWorkbook(wb, file.name);
+      const matchedType = REPORT_TYPES.find(t => t.detect(wb));
+      renderTypeBadge(matchedType, wb);
+      if (matchedType) {
+        matchedType.process(wb);
+      }
     } catch (err) {
       showError('讀取檔案失敗：' + err.message);
     }
@@ -329,11 +388,7 @@ function sheetToRows(ws) {
   return XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, defval: null });
 }
 
-function processWorkbook(wb, filename) {
-  if (!wb.SheetNames.includes(SUMMARY_SHEET)) {
-    showError('找不到工作表「' + SUMMARY_SHEET + '」，請確認上傳的是正確的月報檔案。');
-    return;
-  }
+function processDrugAnalysisWorkbook(wb) {
   const summaryRows = sheetToRows(wb.Sheets[SUMMARY_SHEET]);
   const header = summaryRows[0];
   const rows = summaryRows.slice(1).filter(r => r.some(v => v !== null && v !== ''));
