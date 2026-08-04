@@ -1,0 +1,454 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>藥物分析工作站</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+  :root {
+    --teal-900: #0b2e28;
+    --teal-700: #1f5c50;
+    --teal-500: #2c8a76;
+    --teal-100: #e3f2ee;
+    --coral-600: #c1622e;
+    --coral-100: #fbe9de;
+    --rose-600: #a8467e;
+    --rose-100: #f7e6f0;
+    --ink: #1c2321;
+    --ink-soft: #5a6663;
+    --paper: #f6f5f1;
+    --card: #ffffff;
+    --line: #e1ddd2;
+    --mono: "SF Mono", "Consolas", "Noto Sans TC", monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", system-ui, sans-serif;
+    line-height: 1.6;
+  }
+  header {
+    background: var(--teal-900);
+    color: #eef7f4;
+    padding: 28px 32px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+  header .brand { display: flex; align-items: center; gap: 12px; }
+  header .brand .mark {
+    width: 34px; height: 34px; border-radius: 8px;
+    background: var(--coral-600);
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 700; font-size: 15px; color: #fff;
+  }
+  header h1 { font-size: 19px; font-weight: 500; margin: 0; letter-spacing: 0.3px; }
+  header p { margin: 2px 0 0; font-size: 12.5px; color: #b7d6cd; }
+  main { max-width: 980px; margin: 0 auto; padding: 32px 24px 64px; }
+
+  .step-label {
+    font-size: 12px; letter-spacing: 1.5px; color: var(--teal-500);
+    font-weight: 500; text-transform: uppercase; margin: 0 0 6px;
+  }
+  section.block { margin-bottom: 36px; }
+  h2 { font-size: 17px; font-weight: 500; margin: 0 0 4px; }
+  .sub { color: var(--ink-soft); font-size: 13.5px; margin: 0 0 16px; }
+
+  .dropzone {
+    border: 1.5px dashed var(--line);
+    border-radius: 12px;
+    background: var(--card);
+    padding: 36px 24px;
+    text-align: center;
+    cursor: pointer;
+    transition: border-color .15s, background .15s;
+  }
+  .dropzone:hover, .dropzone.drag { border-color: var(--teal-500); background: var(--teal-100); }
+  .dropzone .icon {
+    width: 46px; height: 46px; margin: 0 auto 12px; border-radius: 50%;
+    background: var(--teal-100); display: flex; align-items: center; justify-content: center;
+    font-size: 20px; color: var(--teal-700);
+  }
+  .dropzone strong { display: block; font-size: 14.5px; margin-bottom: 4px; }
+  .dropzone span { font-size: 12.5px; color: var(--ink-soft); }
+  input[type=file] { display: none; }
+
+  .filerow {
+    display: flex; align-items: center; gap: 12px;
+    background: var(--card); border: 1px solid var(--line); border-radius: 10px;
+    padding: 12px 16px; font-size: 13.5px;
+  }
+  .filerow .name { font-weight: 500; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .filerow button {
+    background: none; border: 1px solid var(--line); border-radius: 8px;
+    padding: 6px 12px; font-size: 12.5px; cursor: pointer; color: var(--ink-soft);
+  }
+
+  .cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+  @media (max-width: 700px) { .cards { grid-template-columns: 1fr; } }
+  .card {
+    background: var(--card); border-radius: 12px; border: 1px solid var(--line);
+    padding: 18px 18px 16px; position: relative; overflow: hidden;
+  }
+  .card::before {
+    content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 4px;
+  }
+  .card.opd::before { background: var(--teal-500); }
+  .card.ipd::before { background: var(--rose-600); }
+  .card.er::before { background: var(--coral-600); }
+  .card .label { font-size: 13px; color: var(--ink-soft); margin-bottom: 8px; }
+  .card .count { font-size: 22px; font-weight: 500; margin-bottom: 10px; }
+  .card .metrics { display: flex; flex-direction: column; gap: 3px; font-size: 12.5px; color: var(--ink-soft); font-family: var(--mono); }
+  .card .metrics b { color: var(--ink); font-weight: 500; }
+
+  .tabs { display: flex; gap: 6px; margin: 22px 0 10px; }
+  .tab {
+    padding: 7px 14px; border-radius: 8px; font-size: 13px; cursor: pointer;
+    border: 1px solid var(--line); background: var(--card); color: var(--ink-soft);
+  }
+  .tab.active { background: var(--teal-900); color: #fff; border-color: var(--teal-900); }
+  .tablewrap {
+    background: var(--card); border: 1px solid var(--line); border-radius: 10px;
+    max-height: 340px; overflow: auto;
+  }
+  table.preview { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  table.preview th {
+    position: sticky; top: 0; background: var(--teal-100); color: var(--teal-900);
+    text-align: left; padding: 8px 10px; font-weight: 500; white-space: nowrap;
+  }
+  table.preview td { padding: 6px 10px; border-top: 1px solid var(--line); white-space: nowrap; font-family: var(--mono); }
+  table.preview tr:last-child td { font-weight: 500; background: var(--coral-100); }
+
+  .downloadbar {
+    display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+    background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+    padding: 18px;
+  }
+  .downloadbar label { font-size: 13px; color: var(--ink-soft); }
+  .downloadbar input[type=month] {
+    border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px; font-size: 13px;
+    font-family: var(--mono);
+  }
+  .btn-primary {
+    background: var(--teal-900); color: #fff; border: none; border-radius: 9px;
+    padding: 10px 20px; font-size: 13.5px; font-weight: 500; cursor: pointer;
+  }
+  .btn-primary:disabled { background: #b9c4c0; cursor: not-allowed; }
+  .btn-primary:hover:not(:disabled) { background: var(--teal-700); }
+
+  .note {
+    font-size: 12.5px; color: var(--ink-soft); background: var(--teal-100);
+    border-radius: 10px; padding: 12px 16px; margin-top: 10px;
+  }
+  .note code {
+    background: rgba(0,0,0,0.06); padding: 1px 5px; border-radius: 4px; font-family: var(--mono);
+  }
+  .error {
+    background: var(--rose-100); color: #7a2a53; border-radius: 10px; padding: 12px 16px;
+    font-size: 13px;
+  }
+  .hidden { display: none; }
+  footer { text-align: center; color: var(--ink-soft); font-size: 12px; padding: 24px; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="brand">
+    <div class="mark">藥</div>
+    <div>
+      <h1>藥物分析工作站</h1>
+      <p>麻豆新樓醫院藥劑科 · 抗生素使用分析月報整理工具</p>
+    </div>
+  </div>
+</header>
+
+<main>
+
+  <section class="block">
+    <p class="step-label">Step 1</p>
+    <h2>上傳當月原始報表</h2>
+    <p class="sub">支援 .xls / .xlsx，檔案需包含「藥品使用分析」與「藥品使用分析總計」兩個工作表。</p>
+
+    <div id="dropzone" class="dropzone">
+      <div class="icon"><i class="ti ti-upload"></i>&#8613;</div>
+      <strong>拖曳檔案到這裡，或點擊選擇檔案</strong>
+      <span>.xls / .xlsx</span>
+      <input type="file" id="fileInput" accept=".xls,.xlsx">
+    </div>
+
+    <div id="filerow" class="filerow hidden" style="margin-top:12px;">
+      <span class="name" id="fileName"></span>
+      <button id="clearBtn">移除</button>
+    </div>
+
+    <div id="errorBox" class="error hidden" style="margin-top:12px;"></div>
+  </section>
+
+  <section class="block hidden" id="resultSection">
+    <p class="step-label">Step 2</p>
+    <h2>本月分類總計</h2>
+    <p class="sub">依「來源」欄位自動拆分為門診 / 住院 / 急診三張總計表。</p>
+
+    <div class="cards">
+      <div class="card opd">
+        <div class="label">門診</div>
+        <div class="count" id="opdCount">0 筆</div>
+        <div class="metrics">
+          <span>總劑量 <b id="opdDose">0</b></span>
+          <span>總額 <b id="opdAmt">0</b></span>
+        </div>
+      </div>
+      <div class="card ipd">
+        <div class="label">住院</div>
+        <div class="count" id="ipdCount">0 筆</div>
+        <div class="metrics">
+          <span>總劑量 <b id="ipdDose">0</b></span>
+          <span>總額 <b id="ipdAmt">0</b></span>
+        </div>
+      </div>
+      <div class="card er">
+        <div class="label">急診</div>
+        <div class="count" id="erCount">0 筆</div>
+        <div class="metrics">
+          <span>總劑量 <b id="erDose">0</b></span>
+          <span>總額 <b id="erAmt">0</b></span>
+        </div>
+      </div>
+    </div>
+
+    <div class="tabs">
+      <div class="tab active" data-src="門診">門診明細</div>
+      <div class="tab" data-src="住院">住院明細</div>
+      <div class="tab" data-src="急診">急診明細</div>
+    </div>
+    <div class="tablewrap">
+      <table class="preview" id="previewTable">
+        <thead><tr id="previewHead"></tr></thead>
+        <tbody id="previewBody"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="block hidden" id="downloadSection">
+    <p class="step-label">Step 3</p>
+    <h2>下載本月整理結果</h2>
+    <p class="sub">下載後請放入 GitHub 專案的 <code>reports/YYYY-MM/</code> 資料夾。</p>
+
+    <div class="downloadbar">
+      <label for="monthInput">報表月份</label>
+      <input type="month" id="monthInput">
+      <button class="btn-primary" id="downloadBtn">下載整理結果 (.xlsx)</button>
+    </div>
+
+    <div class="note">
+      下載的檔案會包含 <code>藥品使用分析</code>（原始明細）、<code>門診藥品使用分析總計</code>、<code>住院藥品使用分析總計</code>、<code>急診藥品使用分析總計</code> 四張工作表，每張皆依計價項排序並附小計。
+      <br>接著請把原始檔放到 <code>data/YYYY-MM/</code>、整理後的檔案放到 <code>reports/YYYY-MM/</code>，上傳到 GitHub 即完成本月流程。
+    </div>
+  </section>
+
+</main>
+
+<footer>藥物分析工作站 · 純前端工具，資料不會上傳到任何伺服器，僅在您的瀏覽器中處理</footer>
+
+<script>
+const SOURCES = ["門診", "住院", "急診"];
+const SUMMARY_SHEET = "藥品使用分析總計";
+const DETAIL_SHEET = "藥品使用分析";
+const NUMERIC_TOTAL_COLS = ["總劑量", "總額"];
+
+let state = {
+  detailRows: null,
+  detailHeader: null,
+  summaryHeader: null,
+  bySource: {}
+};
+
+const dropzone = document.getElementById('dropzone');
+const fileInput = document.getElementById('fileInput');
+const filerow = document.getElementById('filerow');
+const fileName = document.getElementById('fileName');
+const clearBtn = document.getElementById('clearBtn');
+const errorBox = document.getElementById('errorBox');
+const resultSection = document.getElementById('resultSection');
+const downloadSection = document.getElementById('downloadSection');
+
+dropzone.addEventListener('click', () => fileInput.click());
+dropzone.addEventListener('dragover', e => { e.preventDefault(); dropzone.classList.add('drag'); });
+dropzone.addEventListener('dragleave', () => dropzone.classList.remove('drag'));
+dropzone.addEventListener('drop', e => {
+  e.preventDefault();
+  dropzone.classList.remove('drag');
+  if (e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]);
+});
+fileInput.addEventListener('change', e => {
+  if (e.target.files.length) handleFile(e.target.files[0]);
+});
+clearBtn.addEventListener('click', resetAll);
+
+function resetAll() {
+  fileInput.value = '';
+  filerow.classList.add('hidden');
+  errorBox.classList.add('hidden');
+  resultSection.classList.add('hidden');
+  downloadSection.classList.add('hidden');
+  state = { detailRows: null, detailHeader: null, summaryHeader: null, bySource: {} };
+}
+
+function showError(msg) {
+  errorBox.textContent = msg;
+  errorBox.classList.remove('hidden');
+  resultSection.classList.add('hidden');
+  downloadSection.classList.add('hidden');
+}
+
+function handleFile(file) {
+  errorBox.classList.add('hidden');
+  fileName.textContent = file.name;
+  filerow.classList.remove('hidden');
+
+  const reader = new FileReader();
+  reader.onload = e => {
+    try {
+      const data = new Uint8Array(e.target.result);
+      const wb = XLSX.read(data, { type: 'array' });
+      processWorkbook(wb, file.name);
+    } catch (err) {
+      showError('讀取檔案失敗：' + err.message);
+    }
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+function sheetToRows(ws) {
+  return XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, defval: null });
+}
+
+function processWorkbook(wb, filename) {
+  if (!wb.SheetNames.includes(SUMMARY_SHEET)) {
+    showError('找不到工作表「' + SUMMARY_SHEET + '」，請確認上傳的是正確的月報檔案。');
+    return;
+  }
+  const summaryRows = sheetToRows(wb.Sheets[SUMMARY_SHEET]);
+  const header = summaryRows[0];
+  const rows = summaryRows.slice(1).filter(r => r.some(v => v !== null && v !== ''));
+  const sourceIdx = header.indexOf('來源');
+  if (sourceIdx === -1) {
+    showError('「' + SUMMARY_SHEET + '」中找不到欄位「來源」。');
+    return;
+  }
+  const codeIdx = header.indexOf('計價項');
+
+  const bySource = {};
+  SOURCES.forEach(src => {
+    const filtered = rows.filter(r => r[sourceIdx] === src);
+    filtered.sort((a, b) => String(a[codeIdx] || '').localeCompare(String(b[codeIdx] || '')));
+    bySource[src] = filtered;
+  });
+
+  state.detailHeader = wb.SheetNames.includes(DETAIL_SHEET) ? sheetToRows(wb.Sheets[DETAIL_SHEET])[0] : null;
+  state.detailRows = wb.SheetNames.includes(DETAIL_SHEET) ? sheetToRows(wb.Sheets[DETAIL_SHEET]).slice(1) : null;
+  state.summaryHeader = header;
+  state.bySource = bySource;
+
+  renderResults(header);
+  resultSection.classList.remove('hidden');
+  downloadSection.classList.remove('hidden');
+
+  const now = new Date();
+  const monthInput = document.getElementById('monthInput');
+  monthInput.value = now.toISOString().slice(0, 7);
+}
+
+function fmt(n) {
+  if (typeof n !== 'number') return n ?? '';
+  return Number.isInteger(n) ? n.toLocaleString() : n.toLocaleString(undefined, { maximumFractionDigits: 2 });
+}
+
+function sumCol(rows, header, colName) {
+  const idx = header.indexOf(colName);
+  if (idx === -1) return 0;
+  return rows.reduce((s, r) => s + (typeof r[idx] === 'number' ? r[idx] : 0), 0);
+}
+
+function renderResults(header) {
+  const map = { '門診': 'opd', '住院': 'ipd', '急診': 'er' };
+  SOURCES.forEach(src => {
+    const rows = state.bySource[src];
+    const prefix = map[src];
+    document.getElementById(prefix + 'Count').textContent = rows.length.toLocaleString() + ' 筆';
+    document.getElementById(prefix + 'Dose').textContent = fmt(sumCol(rows, header, '總劑量'));
+    document.getElementById(prefix + 'Amt').textContent = fmt(sumCol(rows, header, '總額'));
+  });
+  renderPreview('門診');
+}
+
+function renderPreview(src) {
+  const header = state.summaryHeader;
+  const rows = state.bySource[src];
+  const head = document.getElementById('previewHead');
+  const body = document.getElementById('previewBody');
+  head.innerHTML = header.map(h => '<th>' + (h ?? '') + '</th>').join('');
+  const rowsHtml = rows.slice(0, 200).map(r =>
+    '<tr>' + header.map((h, i) => '<td>' + (r[i] ?? '') + '</td>').join('') + '</tr>'
+  ).join('');
+  const totalRow = buildTotalRowHtml(header, rows, src);
+  body.innerHTML = rowsHtml + totalRow;
+}
+
+function buildTotalRowHtml(header, rows, src) {
+  const dose = sumCol(rows, header, '總劑量');
+  const amt = sumCol(rows, header, '總額');
+  return '<tr>' + header.map((h) => {
+    if (h === '計價項') return '<td>' + src + ' 小計</td>';
+    if (h === '總劑量') return '<td>' + fmt(dose) + '</td>';
+    if (h === '總額') return '<td>' + fmt(amt) + '</td>';
+    return '<td></td>';
+  }).join('') + '</tr>';
+}
+
+document.querySelectorAll('.tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    tab.classList.add('active');
+    renderPreview(tab.dataset.src);
+  });
+});
+
+document.getElementById('downloadBtn').addEventListener('click', () => {
+  const month = document.getElementById('monthInput').value || 'YYYY-MM';
+  const outWb = XLSX.utils.book_new();
+
+  if (state.detailHeader && state.detailRows) {
+    const detailData = [state.detailHeader, ...state.detailRows];
+    const ws = XLSX.utils.aoa_to_sheet(detailData);
+    XLSX.utils.book_append_sheet(outWb, ws, '藥品使用分析');
+  }
+
+  SOURCES.forEach(src => {
+    const header = state.summaryHeader;
+    const rows = state.bySource[src];
+    const dose = sumCol(rows, header, '總劑量');
+    const amt = sumCol(rows, header, '總額');
+    const totalRow = header.map(h => {
+      if (h === '計價項') return src + ' 小計';
+      if (h === '總劑量') return dose;
+      if (h === '總額') return amt;
+      return null;
+    });
+    const data = [header, ...rows, totalRow];
+    const ws = XLSX.utils.aoa_to_sheet(data);
+    XLSX.utils.book_append_sheet(outWb, ws, src + '藥品使用分析總計');
+  });
+
+  XLSX.writeFile(outWb, 'drug-analysis-' + month + '.xlsx');
+});
+</script>
+
+</body>
+</html>
