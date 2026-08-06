@@ -111,9 +111,9 @@
   .card::before {
     content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 4px;
   }
-  .card.opd::before { background: var(--teal-500); }
-  .card.ipd::before { background: var(--rose-600); }
-  .card.er::before { background: var(--coral-600); }
+  .card.c0::before { background: var(--teal-500); }
+  .card.c1::before { background: var(--rose-600); }
+  .card.c2::before { background: var(--coral-600); }
   .card .label { font-size: 13px; color: var(--ink-soft); margin-bottom: 8px; }
   .card .count { font-size: 22px; font-weight: 500; margin-bottom: 10px; }
   .card .metrics { display: flex; flex-direction: column; gap: 3px; font-size: 12.5px; color: var(--ink-soft); font-family: var(--mono); }
@@ -199,13 +199,13 @@
   <section class="block">
     <p class="step-label">Step 1</p>
     <h2>上傳當月原始報表</h2>
-    <p class="sub">支援 .xls / .xlsx，檔案需包含「藥品使用分析」與「藥品使用分析總計」兩個工作表。</p>
+    <p class="sub">支援 .xls / .xlsx / .csv，工作站會自動辨識報表類型。</p>
 
     <div id="dropzone" class="dropzone">
       <div class="icon"><i class="ti ti-upload"></i>&#8613;</div>
       <strong>拖曳檔案到這裡，或點擊選擇檔案</strong>
-      <span>.xls / .xlsx</span>
-      <input type="file" id="fileInput" accept=".xls,.xlsx">
+      <span>.xls / .xlsx / .csv</span>
+      <input type="file" id="fileInput" accept=".xls,.xlsx,.csv">
     </div>
 
     <div id="filerow" class="filerow hidden" style="margin-top:12px;">
@@ -219,41 +219,12 @@
 
   <section class="block hidden" id="resultSection">
     <p class="step-label">Step 2</p>
-    <h2>本月分類總計</h2>
-    <p class="sub">依「來源」欄位自動拆分為門診 / 住院 / 急診三張總計表。</p>
+    <h2 id="resultTitle">本月分類總計</h2>
+    <p class="sub" id="resultSub">依「來源」欄位自動拆分為門診 / 住院 / 急診三張總計表。</p>
 
-    <div class="cards">
-      <div class="card opd">
-        <div class="label">門診</div>
-        <div class="count" id="opdCount">0 筆</div>
-        <div class="metrics">
-          <span>總劑量 <b id="opdDose">0</b></span>
-          <span>總額 <b id="opdAmt">0</b></span>
-        </div>
-      </div>
-      <div class="card ipd">
-        <div class="label">住院</div>
-        <div class="count" id="ipdCount">0 筆</div>
-        <div class="metrics">
-          <span>總劑量 <b id="ipdDose">0</b></span>
-          <span>總額 <b id="ipdAmt">0</b></span>
-        </div>
-      </div>
-      <div class="card er">
-        <div class="label">急診</div>
-        <div class="count" id="erCount">0 筆</div>
-        <div class="metrics">
-          <span>總劑量 <b id="erDose">0</b></span>
-          <span>總額 <b id="erAmt">0</b></span>
-        </div>
-      </div>
-    </div>
+    <div class="cards" id="cardsContainer"></div>
 
-    <div class="tabs">
-      <div class="tab active" data-src="門診">門診明細</div>
-      <div class="tab" data-src="住院">住院明細</div>
-      <div class="tab" data-src="急診">急診明細</div>
-    </div>
+    <div class="tabs" id="tabsContainer"></div>
     <div class="tablewrap">
       <table class="preview" id="previewTable">
         <thead><tr id="previewHead"></tr></thead>
@@ -287,13 +258,13 @@
 const SOURCES = ["門診", "住院", "急診"];
 const SUMMARY_SHEET = "藥品使用分析總計";
 const DETAIL_SHEET = "藥品使用分析";
-const NUMERIC_TOTAL_COLS = ["總劑量", "總額"];
+const CARD_COLORS = ["c0", "c1", "c2"];
 
 let state = {
-  detailRows: null,
+  handler: null,
   detailHeader: null,
-  summaryHeader: null,
-  bySource: {}
+  detailRows: null,
+  bySource: {}      // { 門診: [{ key: {...}, metrics: {...} }, ...], ... }
 };
 
 const dropzone = document.getElementById('dropzone');
@@ -304,6 +275,7 @@ const clearBtn = document.getElementById('clearBtn');
 const errorBox = document.getElementById('errorBox');
 const resultSection = document.getElementById('resultSection');
 const downloadSection = document.getElementById('downloadSection');
+const typeBadge = document.getElementById('typeBadge');
 
 dropzone.addEventListener('click', () => fileInput.click());
 dropzone.addEventListener('dragover', e => { e.preventDefault(); dropzone.classList.add('drag'); });
@@ -318,25 +290,76 @@ fileInput.addEventListener('change', e => {
 });
 clearBtn.addEventListener('click', resetAll);
 
-const typeBadge = document.getElementById('typeBadge');
+function normalizeHeaderName(h) {
+  // 去除 BOM、前後空白，方便比對欄名
+  return (h ?? '').toString().replace(/^\uFEFF/, '').trim();
+}
 
 /*
  * 報表類型註冊表
  * 每新增一種報表格式，只要在這裡加入一個 handler 物件即可，
- * 不需要更動上傳、辨識、錯誤處理等其他邏輯。
+ * 不需要更動上傳、辨識、卡片/表格/下載等其他邏輯。
  *
  * handler 物件格式：
- *   id       唯一識別碼
- *   label    顯示給使用者的名稱
- *   detect(wb)   回傳 true/false，判斷這個工作簿是否屬於此類型
- *   process(wb)  實際處理邏輯，處理完成後負責更新畫面
+ *   id            唯一識別碼
+ *   label         顯示給使用者的名稱
+ *   detect(wb)    回傳 true/false，判斷這個工作簿是否屬於此類型
+ *   getRows(wb)   回傳 { header, rows }，header 為欄名陣列，rows 為資料陣列（不含表頭）
+ *   sourceField   來源欄位的欄名
+ *   normalizeSource(raw)  將原始的「來源」值轉成標準的 門診/住院/急診（辨識不出來回傳 null）
+ *   keyFields     用來分組彙總的欄位（例如 ['計價項'] 或 ['ATC大類','ATC名稱']）
+ *   metricFields  要加總並顯示的數值欄位（例如 ['總劑量','總額']）
+ *   outputSheetSuffix  下載檔案中每個來源分頁的名稱後綴（例如 '藥品使用分析總計'）
  */
 const REPORT_TYPES = [
   {
     id: 'drug-analysis-summary',
-    label: '藥品使用分析月報（門診/住院/急診）',
+    label: '藥品使用分析月報（依計價項，門診/住院/急診）',
     detect: wb => wb.SheetNames.includes(SUMMARY_SHEET),
-    process: processDrugAnalysisWorkbook
+    getRows: wb => {
+      const rows = sheetToRows(wb.Sheets[SUMMARY_SHEET]);
+      return { header: rows[0].map(normalizeHeaderName), rows: rows.slice(1) };
+    },
+    sourceField: '來源',
+    normalizeSource: raw => {
+      const v = (raw ?? '').toString().trim();
+      return SOURCES.includes(v) ? v : null;
+    },
+    keyFields: ['計價項'],
+    metricFields: ['總劑量', '總額'],
+    outputSheetSuffix: '藥品使用分析總計',
+    extraSheets: wb => {
+      if (!wb.SheetNames.includes(DETAIL_SHEET)) return [];
+      const rows = sheetToRows(wb.Sheets[DETAIL_SHEET]);
+      return [{ name: DETAIL_SHEET, header: rows[0], rows: rows.slice(1) }];
+    }
+  },
+  {
+    id: 'atc-annual-summary',
+    label: 'ATC 大類藥品金額統計（門診/住院/急診）',
+    detect: wb => {
+      const first = wb.SheetNames[0];
+      if (!first) return false;
+      const rows = sheetToRows(wb.Sheets[first]);
+      if (!rows.length) return false;
+      const header = rows[0].map(normalizeHeaderName);
+      return header.includes('ATC大類') && header.includes('來源');
+    },
+    getRows: wb => {
+      const rows = sheetToRows(wb.Sheets[wb.SheetNames[0]]);
+      return { header: rows[0].map(normalizeHeaderName), rows: rows.slice(1) };
+    },
+    sourceField: '來源',
+    normalizeSource: raw => {
+      const v = (raw ?? '').toString().trim();
+      const map = { '門': '門診', '住': '住院', '急': '急診' };
+      if (SOURCES.includes(v)) return v;
+      return map[v] || null;
+    },
+    keyFields: ['ATC大類', 'ATC名稱'],
+    metricFields: ['總金額', '健保金額', '自費金額'],
+    outputSheetSuffix: 'ATC大類金額統計',
+    extraSheets: () => []
   }
   // 之後有新的報表類型，依照上面格式在這個陣列裡新增一項即可
 ];
@@ -348,7 +371,7 @@ function resetAll() {
   typeBadge.classList.add('hidden');
   resultSection.classList.add('hidden');
   downloadSection.classList.add('hidden');
-  state = { detailRows: null, detailHeader: null, summaryHeader: null, bySource: {} };
+  state = { handler: null, detailHeader: null, detailRows: null, bySource: {} };
 }
 
 function showError(msg) {
@@ -381,66 +404,81 @@ function handleFile(file) {
   fileName.textContent = file.name;
   filerow.classList.remove('hidden');
 
+  const isCsv = /\.csv$/i.test(file.name);
   const reader = new FileReader();
   reader.onload = e => {
     try {
-      const data = new Uint8Array(e.target.result);
-      const wb = XLSX.read(data, { type: 'array' });
+      const wb = isCsv
+        ? XLSX.read(e.target.result, { type: 'string' })
+        : XLSX.read(new Uint8Array(e.target.result), { type: 'array' });
       const matchedType = REPORT_TYPES.find(t => t.detect(wb));
       renderTypeBadge(matchedType, wb);
       if (matchedType) {
-        matchedType.process(wb);
+        processWithHandler(matchedType, wb);
       }
     } catch (err) {
       showError('讀取檔案失敗：' + err.message);
     }
   };
-  reader.readAsArrayBuffer(file);
+  if (isCsv) {
+    reader.readAsText(file, 'utf-8');
+  } else {
+    reader.readAsArrayBuffer(file);
+  }
 }
 
 function sheetToRows(ws) {
   return XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, defval: null });
 }
 
-function processDrugAnalysisWorkbook(wb) {
-  const summaryRows = sheetToRows(wb.Sheets[SUMMARY_SHEET]);
-  const header = summaryRows[0];
-  const rows = summaryRows.slice(1).filter(r => r.some(v => v !== null && v !== ''));
-  const sourceIdx = header.indexOf('來源');
+function processWithHandler(handler, wb) {
+  const { header, rows } = handler.getRows(wb);
+  const cleanRows = rows.filter(r => r.some(v => v !== null && v !== ''));
+
+  const sourceIdx = header.indexOf(handler.sourceField);
   if (sourceIdx === -1) {
-    showError('「' + SUMMARY_SHEET + '」中找不到欄位「來源」。');
+    showError('找不到欄位「' + handler.sourceField + '」，無法依來源分類。');
     return;
   }
-  const codeIdx = header.indexOf('計價項');
-  const doseIdx = header.indexOf('總劑量');
-  const amtIdx = header.indexOf('總額');
+  const keyIdxs = handler.keyFields.map(f => header.indexOf(f));
+  const metricIdxs = handler.metricFields.map(f => header.indexOf(f));
 
-  // 依「計價項」純加總（不再細分科別/醫師），每個藥品代碼在該來源下只出現一列
   const bySource = {};
-  SOURCES.forEach(src => {
-    const agg = {};
-    rows.filter(r => r[sourceIdx] === src).forEach(r => {
-      const code = r[codeIdx] || '';
-      const dose = typeof r[doseIdx] === 'number' ? r[doseIdx] : 0;
-      const amt = typeof r[amtIdx] === 'number' ? r[amtIdx] : 0;
-      if (!agg[code]) agg[code] = { code, dose: 0, amt: 0 };
-      agg[code].dose += dose;
-      agg[code].amt += amt;
+  SOURCES.forEach(src => { bySource[src] = {}; });
+
+  cleanRows.forEach(r => {
+    const src = handler.normalizeSource(r[sourceIdx]);
+    if (!src) return; // 無法辨識的來源值，忽略（例如空白或未對應項目）
+    const keyVals = keyIdxs.map(i => (r[i] ?? '').toString().trim());
+    const keyStr = keyVals.join('｜');
+    if (!bySource[src][keyStr]) {
+      bySource[src][keyStr] = { keyVals, metrics: handler.metricFields.map(() => 0) };
+    }
+    metricIdxs.forEach((idx, mi) => {
+      const v = r[idx];
+      if (typeof v === 'number') bySource[src][keyStr].metrics[mi] += v;
     });
-    bySource[src] = Object.values(agg).sort((a, b) => a.code.localeCompare(b.code));
   });
 
-  state.detailHeader = wb.SheetNames.includes(DETAIL_SHEET) ? sheetToRows(wb.Sheets[DETAIL_SHEET])[0] : null;
-  state.detailRows = wb.SheetNames.includes(DETAIL_SHEET) ? sheetToRows(wb.Sheets[DETAIL_SHEET]).slice(1) : null;
-  state.bySource = bySource;
+  const finalBySource = {};
+  SOURCES.forEach(src => {
+    finalBySource[src] = Object.values(bySource[src]).sort((a, b) =>
+      a.keyVals.join('').localeCompare(b.keyVals.join(''))
+    );
+  });
+
+  state.handler = handler;
+  state.bySource = finalBySource;
+
+  const extras = handler.extraSheets ? handler.extraSheets(wb) : [];
+  state.extraSheets = extras;
 
   renderResults();
   resultSection.classList.remove('hidden');
   downloadSection.classList.remove('hidden');
 
   const now = new Date();
-  const monthInput = document.getElementById('monthInput');
-  monthInput.value = now.toISOString().slice(0, 7);
+  document.getElementById('monthInput').value = now.toISOString().slice(0, 7);
 }
 
 function fmt(n) {
@@ -448,71 +486,101 @@ function fmt(n) {
   return Number.isInteger(n) ? n.toLocaleString() : n.toLocaleString(undefined, { maximumFractionDigits: 2 });
 }
 
-function sourceTotals(rows) {
-  return rows.reduce((acc, r) => {
-    acc.dose += r.dose;
-    acc.amt += r.amt;
-    return acc;
-  }, { dose: 0, amt: 0 });
+function sourceTotals(rows, metricCount) {
+  const totals = new Array(metricCount).fill(0);
+  rows.forEach(r => r.metrics.forEach((v, i) => { totals[i] += v; }));
+  return totals;
 }
 
 function renderResults() {
-  const map = { '門診': 'opd', '住院': 'ipd', '急診': 'er' };
-  SOURCES.forEach(src => {
+  const handler = state.handler;
+  const cardsContainer = document.getElementById('cardsContainer');
+  const tabsContainer = document.getElementById('tabsContainer');
+
+  cardsContainer.innerHTML = '';
+  tabsContainer.innerHTML = '';
+
+  SOURCES.forEach((src, i) => {
     const rows = state.bySource[src];
-    const prefix = map[src];
-    const totals = sourceTotals(rows);
-    document.getElementById(prefix + 'Count').textContent = rows.length.toLocaleString() + ' 項藥品';
-    document.getElementById(prefix + 'Dose').textContent = fmt(totals.dose);
-    document.getElementById(prefix + 'Amt').textContent = fmt(totals.amt);
+    const totals = sourceTotals(rows, handler.metricFields.length);
+
+    const card = document.createElement('div');
+    card.className = 'card ' + CARD_COLORS[i % CARD_COLORS.length];
+    const metricsHtml = handler.metricFields.map((f, mi) =>
+      '<span>' + f + ' <b>' + fmt(totals[mi]) + '</b></span>'
+    ).join('');
+    card.innerHTML =
+      '<div class="label">' + src + '</div>' +
+      '<div class="count">' + rows.length.toLocaleString() + ' 項' + (rows.length ? '' : '（無資料）') + '</div>' +
+      '<div class="metrics">' + metricsHtml + '</div>';
+    cardsContainer.appendChild(card);
+
+    const tab = document.createElement('div');
+    tab.className = 'tab' + (i === 0 ? ' active' : '');
+    tab.dataset.src = src;
+    tab.textContent = src + '明細';
+    tab.addEventListener('click', () => {
+      tabsContainer.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+      tab.classList.add('active');
+      renderPreview(src);
+    });
+    tabsContainer.appendChild(tab);
   });
-  renderPreview('門診');
+
+  document.getElementById('resultTitle').textContent = handler.label;
+  document.getElementById('resultSub').textContent = '依「' + handler.sourceField + '」欄位自動拆分為門診 / 住院 / 急診，並依「' + handler.keyFields.join('+') + '」彙總。';
+
+  renderPreview(SOURCES[0]);
 }
 
 function renderPreview(src) {
+  const handler = state.handler;
   const rows = state.bySource[src];
   const head = document.getElementById('previewHead');
   const body = document.getElementById('previewBody');
-  head.innerHTML = '<th>計價項</th><th>總劑量</th><th>總額</th>';
-  const rowsHtml = rows.map(r =>
-    '<tr><td>' + r.code + '</td><td>' + fmt(r.dose) + '</td><td>' + fmt(r.amt) + '</td></tr>'
-  ).join('');
-  const totals = sourceTotals(rows);
-  const totalRow = '<tr><td>' + src + ' 總計</td><td>' + fmt(totals.dose) + '</td><td>' + fmt(totals.amt) + '</td></tr>';
+
+  const columns = [...handler.keyFields, ...handler.metricFields];
+  head.innerHTML = columns.map(c => '<th>' + c + '</th>').join('');
+
+  const rowsHtml = rows.map(r => {
+    const keyCells = r.keyVals.map(v => '<td>' + v + '</td>').join('');
+    const metricCells = r.metrics.map(v => '<td>' + fmt(v) + '</td>').join('');
+    return '<tr>' + keyCells + metricCells + '</tr>';
+  }).join('');
+
+  const totals = sourceTotals(rows, handler.metricFields.length);
+  const totalKeyCells = handler.keyFields.map((f, i) => '<td>' + (i === 0 ? src + ' 總計' : '') + '</td>').join('');
+  const totalMetricCells = totals.map(v => '<td>' + fmt(v) + '</td>').join('');
+  const totalRow = '<tr>' + totalKeyCells + totalMetricCells + '</tr>';
+
   body.innerHTML = rowsHtml + totalRow;
 }
 
-document.querySelectorAll('.tab').forEach(tab => {
-  tab.addEventListener('click', () => {
-    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-    tab.classList.add('active');
-    renderPreview(tab.dataset.src);
-  });
-});
-
 document.getElementById('downloadBtn').addEventListener('click', () => {
+  const handler = state.handler;
   const month = document.getElementById('monthInput').value || 'YYYY-MM';
   const outWb = XLSX.utils.book_new();
 
-  if (state.detailHeader && state.detailRows) {
-    const detailData = [state.detailHeader, ...state.detailRows];
-    const ws = XLSX.utils.aoa_to_sheet(detailData);
-    XLSX.utils.book_append_sheet(outWb, ws, '藥品使用分析');
-  }
+  (state.extraSheets || []).forEach(sheet => {
+    const data = [sheet.header, ...sheet.rows];
+    const ws = XLSX.utils.aoa_to_sheet(data);
+    XLSX.utils.book_append_sheet(outWb, ws, sheet.name);
+  });
 
   SOURCES.forEach(src => {
     const rows = state.bySource[src];
-    const totals = sourceTotals(rows);
+    const totals = sourceTotals(rows, handler.metricFields.length);
+    const columns = [...handler.keyFields, ...handler.metricFields];
     const data = [
-      ['計價項', '總劑量', '總額'],
-      ...rows.map(r => [r.code, r.dose, r.amt]),
-      [src + ' 總計', totals.dose, totals.amt]
+      columns,
+      ...rows.map(r => [...r.keyVals, ...r.metrics]),
+      [src + ' 總計', ...handler.keyFields.slice(1).map(() => ''), ...totals]
     ];
     const ws = XLSX.utils.aoa_to_sheet(data);
-    XLSX.utils.book_append_sheet(outWb, ws, src + '藥品使用分析總計');
+    XLSX.utils.book_append_sheet(outWb, ws, src + handler.outputSheetSuffix);
   });
 
-  XLSX.writeFile(outWb, 'drug-analysis-' + month + '.xlsx');
+  XLSX.writeFile(outWb, handler.id + '-' + month + '.xlsx');
 });
 
 if ('serviceWorker' in navigator) {
