@@ -119,6 +119,27 @@
   .card .metrics { display: flex; flex-direction: column; gap: 3px; font-size: 12.5px; color: var(--ink-soft); font-family: var(--mono); }
   .card .metrics b { color: var(--ink); font-weight: 500; }
 
+  .ranking-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px; }
+  .rank-card {
+    background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+    padding: 16px 18px;
+  }
+  .rank-card .rank-title { font-size: 13.5px; font-weight: 500; margin-bottom: 12px; }
+  .rank-row { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+  .rank-row .rank-num {
+    width: 20px; height: 20px; border-radius: 5px; background: var(--teal-100); color: var(--teal-900);
+    font-size: 11px; font-weight: 600; display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+  }
+  .rank-row.top3 .rank-num { background: var(--coral-600); color: #fff; }
+  .rank-row .rank-body { flex: 1; min-width: 0; }
+  .rank-row .rank-label {
+    font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-bottom: 3px;
+  }
+  .rank-row .rank-bar-wrap { background: var(--teal-100); border-radius: 4px; height: 6px; overflow: hidden; }
+  .rank-row .rank-bar { background: var(--teal-500); height: 100%; border-radius: 4px; }
+  .rank-row.top3 .rank-bar { background: var(--coral-600); }
+  .rank-row .rank-value { font-family: var(--mono); font-size: 11.5px; color: var(--ink-soft); white-space: nowrap; flex-shrink: 0; }
+
   .tabs { display: flex; gap: 6px; margin: 22px 0 10px; }
   .tab {
     padding: 7px 14px; border-radius: 8px; font-size: 13px; cursor: pointer;
@@ -224,7 +245,12 @@
 
     <div class="cards" id="cardsContainer"></div>
 
-    <div class="tabs" id="tabsContainer"></div>
+    <div id="rankingBlock" class="hidden">
+      <p class="step-label" style="margin-top:26px;">前 10 大排行</p>
+      <div class="ranking-grid" id="rankingContainer"></div>
+    </div>
+
+    <div class="tabs" id="tabsContainer" style="margin-top:26px;"></div>
     <div class="tablewrap">
       <table class="preview" id="previewTable">
         <thead><tr id="previewHead"></tr></thead>
@@ -328,6 +354,7 @@ const REPORT_TYPES = [
     },
     keyFields: ['計價項'],
     metricFields: ['總劑量', '總額'],
+    rankMetric: '總額',
     outputSheetSuffix: '藥品使用分析總計',
     extraSheets: wb => {
       if (!wb.SheetNames.includes(DETAIL_SHEET)) return [];
@@ -360,6 +387,7 @@ const REPORT_TYPES = [
     },
     keyFields: ['ATC大類', 'ATC名稱'],
     metricFields: ['總金額', '健保金額', '自費金額'],
+    rankMetric: '總金額',
     outputSheetSuffix: 'ATC大類金額統計',
     extraSheets: () => []
   }
@@ -545,7 +573,48 @@ function renderResults() {
   }
   document.getElementById('resultSub').textContent = subText;
 
+  renderRanking();
   renderPreview(activeSources[0]);
+}
+
+function renderRanking() {
+  const handler = state.handler;
+  const rankingBlock = document.getElementById('rankingBlock');
+  const rankingContainer = document.getElementById('rankingContainer');
+  rankingContainer.innerHTML = '';
+
+  const rankMetric = handler.rankMetric || handler.metricFields[0];
+  const metricIdx = handler.metricFields.indexOf(rankMetric);
+  if (metricIdx === -1) { rankingBlock.classList.add('hidden'); return; }
+
+  const anyData = state.activeSources.some(src => state.bySource[src].length > 0);
+  if (!anyData) { rankingBlock.classList.add('hidden'); return; }
+  rankingBlock.classList.remove('hidden');
+
+  state.activeSources.forEach(src => {
+    const rows = state.bySource[src];
+    const top10 = [...rows].sort((a, b) => b.metrics[metricIdx] - a.metrics[metricIdx]).slice(0, 10);
+    const maxVal = top10.length ? top10[0].metrics[metricIdx] : 0;
+
+    const card = document.createElement('div');
+    card.className = 'rank-card';
+    const rowsHtml = top10.map((r, i) => {
+      const val = r.metrics[metricIdx];
+      const pct = maxVal > 0 ? Math.max(4, Math.round((val / maxVal) * 100)) : 0;
+      return '<div class="rank-row' + (i < 3 ? ' top3' : '') + '">' +
+        '<div class="rank-num">' + (i + 1) + '</div>' +
+        '<div class="rank-body">' +
+          '<div class="rank-label" title="' + r.keyVals.join(' ') + '">' + r.keyVals.join(' ') + '</div>' +
+          '<div class="rank-bar-wrap"><div class="rank-bar" style="width:' + pct + '%"></div></div>' +
+        '</div>' +
+        '<div class="rank-value">' + fmt(val) + '</div>' +
+      '</div>';
+    }).join('');
+
+    card.innerHTML = '<div class="rank-title">' + src + '　依「' + rankMetric + '」排序</div>' +
+      (rowsHtml || '<div style="font-size:12.5px;color:var(--ink-soft);">無資料</div>');
+    rankingContainer.appendChild(card);
+  });
 }
 
 function renderPreview(src) {
