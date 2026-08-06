@@ -136,9 +136,22 @@
     font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-bottom: 3px;
   }
   .rank-row .rank-bar-wrap { background: var(--teal-100); border-radius: 4px; height: 6px; overflow: hidden; }
-  .rank-row .rank-bar { background: var(--teal-500); height: 100%; border-radius: 4px; }
+  .rank-row .rank-bar-fill { height: 100%; display: flex; border-radius: 4px; overflow: hidden; }
+  .rank-row .rank-bar { background: var(--teal-500); height: 100%; width: 100%; }
   .rank-row.top3 .rank-bar { background: var(--coral-600); }
+  .rank-row .rank-bar-seg { height: 100%; }
+  .rank-row .rank-bar-seg.seg-teal { background: var(--teal-500); }
+  .rank-row .rank-bar-seg.seg-coral { background: var(--coral-600); }
+  .rank-row .rank-bar-seg.seg-rose { background: var(--rose-600); }
   .rank-row .rank-value { font-family: var(--mono); font-size: 11.5px; color: var(--ink-soft); white-space: nowrap; flex-shrink: 0; }
+  .rank-row .rank-breakdown {
+    display: flex; gap: 10px; font-size: 11px; color: var(--ink-soft); margin-top: 3px; font-family: var(--mono);
+  }
+  .rank-row .rank-breakdown span.dot {
+    display: inline-block; width: 7px; height: 7px; border-radius: 2px; margin-right: 4px;
+  }
+  .rank-row .rank-breakdown .dot.seg-teal { background: var(--teal-500); }
+  .rank-row .rank-breakdown .dot.seg-coral { background: var(--coral-600); }
 
   .tabs { display: flex; gap: 6px; margin: 22px 0 10px; }
   .tab {
@@ -388,6 +401,10 @@ const REPORT_TYPES = [
     keyFields: ['ATC大類', 'ATC名稱'],
     metricFields: ['總金額', '健保金額', '自費金額'],
     rankMetric: '總金額',
+    breakdownMetrics: [
+      { field: '健保金額', label: '健保', color: 'teal' },
+      { field: '自費金額', label: '自費', color: 'coral' }
+    ],
     outputSheetSuffix: 'ATC大類金額統計',
     extraSheets: () => []
   }
@@ -596,21 +613,43 @@ function renderRanking() {
     const top10 = [...rows].sort((a, b) => b.metrics[metricIdx] - a.metrics[metricIdx]).slice(0, 10);
     const maxVal = top10.length ? top10[0].metrics[metricIdx] : 0;
 
-    const card = document.createElement('div');
-    card.className = 'rank-card';
+    const breakdown = handler.breakdownMetrics;
+    const breakdownIdxs = breakdown ? breakdown.map(b => handler.metricFields.indexOf(b.field)) : null;
+
     const rowsHtml = top10.map((r, i) => {
       const val = r.metrics[metricIdx];
       const pct = maxVal > 0 ? Math.max(4, Math.round((val / maxVal) * 100)) : 0;
+
+      let barHtml, breakdownHtml = '';
+      if (breakdown) {
+        const parts = breakdown.map((b, bi) => ({ ...b, val: r.metrics[breakdownIdxs[bi]] }));
+        const partsSum = parts.reduce((s, p) => s + p.val, 0) || 1;
+        barHtml = '<div class="rank-bar-wrap"><div class="rank-bar-fill" style="width:' + pct + '%">' +
+          parts.map(p => '<div class="rank-bar-seg seg-' + p.color + '" style="width:' + (p.val / partsSum * 100) + '%"></div>').join('') +
+          '</div></div>';
+        breakdownHtml = '<div class="rank-breakdown">' +
+          parts.map(p => {
+            const pctOfTotal = partsSum > 0 ? Math.round((p.val / partsSum) * 1000) / 10 : 0;
+            return '<span><span class="dot seg-' + p.color + '"></span>' + p.label + ' ' + fmt(p.val) + '（' + pctOfTotal + '%）</span>';
+          }).join('') +
+        '</div>';
+      } else {
+        barHtml = '<div class="rank-bar-wrap"><div class="rank-bar-fill" style="width:' + pct + '%"><div class="rank-bar"></div></div></div>';
+      }
+
       return '<div class="rank-row' + (i < 3 ? ' top3' : '') + '">' +
         '<div class="rank-num">' + (i + 1) + '</div>' +
         '<div class="rank-body">' +
           '<div class="rank-label" title="' + r.keyVals.join(' ') + '">' + r.keyVals.join(' ') + '</div>' +
-          '<div class="rank-bar-wrap"><div class="rank-bar" style="width:' + pct + '%"></div></div>' +
+          barHtml +
+          breakdownHtml +
         '</div>' +
         '<div class="rank-value">' + fmt(val) + '</div>' +
       '</div>';
     }).join('');
 
+    const card = document.createElement('div');
+    card.className = 'rank-card';
     card.innerHTML = '<div class="rank-title">' + src + '　依「' + rankMetric + '」排序</div>' +
       (rowsHtml || '<div style="font-size:12.5px;color:var(--ink-soft);">無資料</div>');
     rankingContainer.appendChild(card);
