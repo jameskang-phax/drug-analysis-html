@@ -315,6 +315,7 @@ const REPORT_TYPES = [
   {
     id: 'drug-analysis-summary',
     label: '藥品使用分析月報（依計價項，門診/住院/急診）',
+    sourceOrder: ['門診', '住院', '急診'],
     detect: wb => wb.SheetNames.includes(SUMMARY_SHEET),
     getRows: wb => {
       const rows = sheetToRows(wb.Sheets[SUMMARY_SHEET]);
@@ -336,7 +337,8 @@ const REPORT_TYPES = [
   },
   {
     id: 'atc-annual-summary',
-    label: 'ATC 大類藥品金額統計（門診/住院/急診）',
+    label: 'ATC 大類藥品金額統計',
+    sourceOrder: ['門診', '住院', '急診', '合計'],
     detect: wb => {
       const first = wb.SheetNames[0];
       if (!first) return false;
@@ -352,8 +354,8 @@ const REPORT_TYPES = [
     sourceField: '來源',
     normalizeSource: raw => {
       const v = (raw ?? '').toString().trim();
-      const map = { '門': '門診', '住': '住院', '急': '急診' };
-      if (SOURCES.includes(v)) return v;
+      const map = { '門': '門診', '住': '住院', '急': '急診', '合': '合計', '合計': '合計' };
+      if (['門診', '住院', '急診', '合計'].includes(v)) return v;
       return map[v] || null;
     },
     keyFields: ['ATC大類', 'ATC名稱'],
@@ -371,7 +373,7 @@ function resetAll() {
   typeBadge.classList.add('hidden');
   resultSection.classList.add('hidden');
   downloadSection.classList.add('hidden');
-  state = { handler: null, detailHeader: null, detailRows: null, bySource: {} };
+  state = { handler: null, sourceOrder: null, activeSources: null, detailHeader: null, detailRows: null, bySource: {} };
 }
 
 function showError(msg) {
@@ -443,12 +445,14 @@ function processWithHandler(handler, wb) {
   const keyIdxs = handler.keyFields.map(f => header.indexOf(f));
   const metricIdxs = handler.metricFields.map(f => header.indexOf(f));
 
+  const sourceOrder = handler.sourceOrder || SOURCES;
   const bySource = {};
-  SOURCES.forEach(src => { bySource[src] = {}; });
+  sourceOrder.forEach(src => { bySource[src] = {}; });
 
+  let unmatchedCount = 0;
   cleanRows.forEach(r => {
     const src = handler.normalizeSource(r[sourceIdx]);
-    if (!src) return; // 無法辨識的來源值，忽略（例如空白或未對應項目）
+    if (!src || !bySource[src]) { unmatchedCount++; return; } // 無法辨識的來源值，忽略
     const keyVals = keyIdxs.map(i => (r[i] ?? '').toString().trim());
     const keyStr = keyVals.join('｜');
     if (!bySource[src][keyStr]) {
@@ -461,14 +465,20 @@ function processWithHandler(handler, wb) {
   });
 
   const finalBySource = {};
-  SOURCES.forEach(src => {
+  sourceOrder.forEach(src => {
     finalBySource[src] = Object.values(bySource[src]).sort((a, b) =>
       a.keyVals.join('').localeCompare(b.keyVals.join(''))
     );
   });
 
+  // 只呈現實際有資料的來源類別（例如本月檔案只有「合計」，就不顯示空的門診/住院/急診卡片）
+  const activeSources = sourceOrder.filter(src => finalBySource[src].length > 0);
+
   state.handler = handler;
+  state.sourceOrder = sourceOrder;
+  state.activeSources = activeSources.length ? activeSources : sourceOrder;
   state.bySource = finalBySource;
+  state.unmatchedCount = unmatchedCount;
 
   const extras = handler.extraSheets ? handler.extraSheets(wb) : [];
   state.extraSheets = extras;
@@ -496,11 +506,12 @@ function renderResults() {
   const handler = state.handler;
   const cardsContainer = document.getElementById('cardsContainer');
   const tabsContainer = document.getElementById('tabsContainer');
+  const activeSources = state.activeSources;
 
   cardsContainer.innerHTML = '';
   tabsContainer.innerHTML = '';
 
-  SOURCES.forEach((src, i) => {
+  activeSources.forEach((src, i) => {
     const rows = state.bySource[src];
     const totals = sourceTotals(rows, handler.metricFields.length);
 
@@ -528,9 +539,13 @@ function renderResults() {
   });
 
   document.getElementById('resultTitle').textContent = handler.label;
-  document.getElementById('resultSub').textContent = '依「' + handler.sourceField + '」欄位自動拆分為門診 / 住院 / 急診，並依「' + handler.keyFields.join('+') + '」彙總。';
+  let subText = '依「' + handler.sourceField + '」欄位自動拆分，並依「' + handler.keyFields.join('+') + '」彙總。';
+  if (activeSources.length < state.sourceOrder.length) {
+    subText += '　本次檔案只包含「' + activeSources.join('、') + '」分類（其他類別此檔案未提供）。';
+  }
+  document.getElementById('resultSub').textContent = subText;
 
-  renderPreview(SOURCES[0]);
+  renderPreview(activeSources[0]);
 }
 
 function renderPreview(src) {
@@ -567,7 +582,7 @@ document.getElementById('downloadBtn').addEventListener('click', () => {
     XLSX.utils.book_append_sheet(outWb, ws, sheet.name);
   });
 
-  SOURCES.forEach(src => {
+  state.activeSources.forEach(src => {
     const rows = state.bySource[src];
     const totals = sourceTotals(rows, handler.metricFields.length);
     const columns = [...handler.keyFields, ...handler.metricFields];
