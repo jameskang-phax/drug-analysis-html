@@ -196,6 +196,11 @@
   }
   .btn-primary:disabled { background: #b9c4c0; cursor: not-allowed; }
   .btn-primary:hover:not(:disabled) { background: var(--teal-700); }
+  .btn-secondary {
+    background: #fff; color: var(--teal-900); border: 1px solid var(--teal-900); border-radius: 9px;
+    padding: 10px 20px; font-size: 13.5px; font-weight: 500; cursor: pointer;
+  }
+  .btn-secondary:hover { background: var(--teal-100); }
 
   .note {
     font-size: 12.5px; color: var(--ink-soft); background: var(--teal-100);
@@ -290,6 +295,7 @@
       <label for="monthInput">報表月份</label>
       <input type="month" id="monthInput">
       <button class="btn-primary" id="downloadBtn">下載整理結果 (.xlsx)</button>
+      <button class="btn-secondary" id="exportImageBtn">匯出成圖片 (.png)</button>
     </div>
 
     <div class="note">
@@ -737,6 +743,267 @@ document.getElementById('downloadBtn').addEventListener('click', () => {
 
   XLSX.writeFile(outWb, handler.id + '-' + month + '.xlsx');
 });
+
+document.getElementById('exportImageBtn').addEventListener('click', () => {
+  exportSummaryImage();
+});
+
+const IMG = {
+  colWidth: 420,
+  gap: 24,
+  margin: 30,
+  cardH: 100,
+  headerH: 96,
+  footerH: 44,
+  pieH: 150,
+  barChartH: 225,
+  sectionTitleH: 22,
+  sectionGap: 26,
+  font: '"Noto Sans TC","Microsoft JhengHei",sans-serif'
+};
+
+function truncateText(ctx, text, maxWidth) {
+  if (ctx.measureText(text).width <= maxWidth) return text;
+  let t = text;
+  while (t.length > 1 && ctx.measureText(t + '…').width > maxWidth) {
+    t = t.slice(0, -1);
+  }
+  return t + '…';
+}
+
+function buildImageColumn(handler, src) {
+  const rows = state.bySource[src];
+  const totals = sourceTotals(rows, handler.metricFields.length);
+
+  let pie = null;
+  if (handler.breakdownMetrics) {
+    pie = handler.breakdownMetrics.map(b => ({
+      label: b.label,
+      color: b.color === 'teal' ? '#2c8a76' : '#c1622e',
+      value: totals[handler.metricFields.indexOf(b.field)]
+    }));
+  }
+
+  let barCharts;
+  if (handler.breakdownMetrics) {
+    barCharts = handler.breakdownMetrics.map(b => {
+      const idx = handler.metricFields.indexOf(b.field);
+      const top10 = [...rows].sort((x, y) => y.metrics[idx] - x.metrics[idx]).slice(0, 10);
+      return {
+        title: b.label + '金額　前10大',
+        color: b.color === 'teal' ? '#2c8a76' : '#c1622e',
+        items: top10.map(r => ({ label: r.keyVals.join(' '), value: r.metrics[idx] }))
+      };
+    });
+  } else {
+    const rankMetric = handler.rankMetric || handler.metricFields[0];
+    const idx = handler.metricFields.indexOf(rankMetric);
+    const top10 = [...rows].sort((x, y) => y.metrics[idx] - x.metrics[idx]).slice(0, 10);
+    barCharts = [{
+      title: '依「' + rankMetric + '」　前10大',
+      color: '#2c8a76',
+      items: top10.map(r => ({ label: r.keyVals.join(' '), value: r.metrics[idx] }))
+    }];
+  }
+
+  return { src, rows, totals, pie, barCharts };
+}
+
+function drawPieChart(ctx, cx, cy, r, slices) {
+  const total = slices.reduce((s, sl) => s + sl.value, 0) || 1;
+  let angle = -Math.PI / 2;
+  slices.forEach(sl => {
+    const frac = sl.value / total;
+    const sweep = frac * Math.PI * 2;
+    ctx.beginPath();
+    ctx.moveTo(cx, cy);
+    ctx.arc(cx, cy, r, angle, angle + sweep);
+    ctx.closePath();
+    ctx.fillStyle = sl.color;
+    ctx.fill();
+    angle += sweep;
+  });
+  // 中心留白圓，做成環狀圖比較好讀
+  ctx.beginPath();
+  ctx.arc(cx, cy, r * 0.55, 0, Math.PI * 2);
+  ctx.fillStyle = '#ffffff';
+  ctx.fill();
+}
+
+function drawBarChart(ctx, x, y, w, h, items, color) {
+  const maxVal = Math.max(1, ...items.map(it => it.value));
+  const n = items.length;
+  const gap = 6;
+  const barW = (w - gap * (n - 1)) / n;
+  const labelSpace = 62; // 底部旋轉標籤預留空間
+  const chartH = h - labelSpace;
+  const baseline = y + chartH;
+
+  // 底線
+  ctx.strokeStyle = '#e1ddd2';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(x, baseline);
+  ctx.lineTo(x + w, baseline);
+  ctx.stroke();
+
+  items.forEach((it, i) => {
+    const bx = x + i * (barW + gap);
+    const barH = Math.max(2, (it.value / maxVal) * (chartH - 16));
+    const by = baseline - barH;
+
+    ctx.fillStyle = color;
+    ctx.globalAlpha = i < 3 ? 1 : 0.55;
+    ctx.fillRect(bx, by, barW, barH);
+    ctx.globalAlpha = 1;
+
+    // 數值（長條上方）
+    ctx.font = '9px ' + IMG.font;
+    ctx.fillStyle = '#5a6663';
+    ctx.textAlign = 'center';
+    ctx.fillText(fmt(it.value), bx + barW / 2, by - 4);
+
+    // 名稱（旋轉標籤，45 度，控制長度避免延伸過深蓋到下一區塊）
+    ctx.save();
+    ctx.translate(bx + barW / 2, baseline + 8);
+    ctx.rotate(-Math.PI / 4);
+    ctx.textAlign = 'right';
+    ctx.font = '9px ' + IMG.font;
+    ctx.fillStyle = '#1c2321';
+    ctx.fillText(truncateText(ctx, it.label, 64), 0, 0);
+    ctx.restore();
+    ctx.textAlign = 'left';
+  });
+}
+
+function exportSummaryImage() {
+  const handler = state.handler;
+  const month = document.getElementById('monthInput').value || 'YYYY-MM';
+  const cols = state.activeSources.map(src => buildImageColumn(handler, src));
+
+  const numCols = cols.length;
+  const barChartsCount = Math.max(...cols.map(c => c.barCharts.length));
+  const pieBlockH = cols[0].pie ? IMG.pieH : 0;
+  const bodyH = pieBlockH + barChartsCount * (IMG.sectionTitleH + IMG.barChartH + IMG.sectionGap);
+
+  const scale = 2;
+  const cssW = IMG.margin * 2 + numCols * IMG.colWidth + (numCols - 1) * IMG.gap;
+  const cssH = IMG.headerH + IMG.cardH + 24 + bodyH + IMG.footerH + IMG.margin;
+
+  const canvas = document.createElement('canvas');
+  canvas.width = cssW * scale;
+  canvas.height = cssH * scale;
+  const ctx = canvas.getContext('2d');
+  ctx.scale(scale, scale);
+
+  // 背景
+  ctx.fillStyle = '#f6f5f1';
+  ctx.fillRect(0, 0, cssW, cssH);
+
+  // 標題區
+  ctx.fillStyle = '#0b2e28';
+  ctx.fillRect(0, 0, cssW, IMG.headerH);
+  ctx.fillStyle = '#ffffff';
+  ctx.font = '600 20px ' + IMG.font;
+  ctx.textBaseline = 'alphabetic';
+  ctx.fillText('藥物分析工作站', IMG.margin, 40);
+  ctx.font = '13px ' + IMG.font;
+  ctx.fillStyle = '#b7d6cd';
+  ctx.fillText('麻豆新樓醫院藥劑科 · ' + handler.label + '　' + month, IMG.margin, 62);
+
+  // 卡片區
+  const cardY = IMG.headerH + 16;
+  cols.forEach((c, i) => {
+    const x = IMG.margin + i * (IMG.colWidth + IMG.gap);
+    ctx.fillStyle = '#ffffff';
+    ctx.strokeStyle = '#e1ddd2';
+    ctx.lineWidth = 1;
+    roundRect(ctx, x, cardY, IMG.colWidth, IMG.cardH, 10);
+    ctx.fill(); ctx.stroke();
+    ctx.fillStyle = '#5a6663';
+    ctx.font = '13px ' + IMG.font;
+    ctx.fillText(c.src, x + 16, cardY + 24);
+    ctx.fillStyle = '#1c2321';
+    ctx.font = '600 20px ' + IMG.font;
+    ctx.fillText(c.rows.length.toLocaleString() + ' 項', x + 16, cardY + 50);
+    ctx.font = '11.5px ' + IMG.font;
+    ctx.fillStyle = '#5a6663';
+    let ly = cardY + 70;
+    handler.metricFields.forEach((f, mi) => {
+      ctx.fillText(f + ' ' + fmt(c.totals[mi]), x + 16, ly);
+      ly += 15;
+    });
+  });
+
+  let y = cardY + IMG.cardH + 24;
+
+  // 圓餅圖區（健保/自費佔比）
+  if (pieBlockH) {
+    cols.forEach((c, i) => {
+      const x = IMG.margin + i * (IMG.colWidth + IMG.gap);
+      ctx.font = '600 12.5px ' + IMG.font;
+      ctx.fillStyle = '#1c2321';
+      ctx.fillText(c.src + '　健保／自費佔比', x, y + 14);
+
+      const cx = x + 55, cy = y + 90, r = 50;
+      drawPieChart(ctx, cx, cy, r, c.pie);
+
+      const total = c.pie.reduce((s, sl) => s + sl.value, 0) || 1;
+      let ly = y + 45;
+      c.pie.forEach(sl => {
+        const pct = Math.round(sl.value / total * 1000) / 10;
+        ctx.fillStyle = sl.color;
+        ctx.fillRect(cx + r + 24, ly - 9, 10, 10);
+        ctx.fillStyle = '#1c2321';
+        ctx.font = '11.5px ' + IMG.font;
+        ctx.fillText(sl.label + '　' + fmt(sl.value) + '（' + pct + '%）', cx + r + 40, ly);
+        ly += 20;
+      });
+    });
+    y += pieBlockH;
+  }
+
+  // 柱狀圖區（前10大）
+  for (let s = 0; s < barChartsCount; s++) {
+    cols.forEach((c, i) => {
+      const x = IMG.margin + i * (IMG.colWidth + IMG.gap);
+      const bc = c.barCharts[s];
+      if (!bc) return;
+      ctx.fillStyle = bc.color;
+      ctx.fillRect(x, y + 4, 3, IMG.sectionTitleH - 8);
+      ctx.font = '600 12.5px ' + IMG.font;
+      ctx.fillStyle = '#1c2321';
+      ctx.fillText(bc.title, x + 10, y + 16);
+
+      drawBarChart(ctx, x, y + IMG.sectionTitleH, IMG.colWidth, IMG.barChartH, bc.items, bc.color);
+    });
+    y += IMG.sectionTitleH + IMG.barChartH + IMG.sectionGap;
+  }
+
+  // 頁尾
+  ctx.font = '10.5px ' + IMG.font;
+  ctx.fillStyle = '#8a9490';
+  ctx.fillText('藥物分析工作站 · 匯出時間 ' + new Date().toLocaleString('zh-TW'), IMG.margin, cssH - 16);
+
+  canvas.toBlob(blob => {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = handler.id + '-' + month + '.png';
+    a.click();
+    URL.revokeObjectURL(url);
+  }, 'image/png');
+}
+
+function roundRect(ctx, x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
