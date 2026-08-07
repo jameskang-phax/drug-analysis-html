@@ -143,6 +143,15 @@
   .rank-row .rank-bar-seg.seg-teal { background: var(--teal-500); }
   .rank-row .rank-bar-seg.seg-coral { background: var(--coral-600); }
   .rank-row .rank-bar-seg.seg-rose { background: var(--rose-600); }
+  .rank-row .rank-bar-fill.seg-teal-fill { background: var(--teal-500); }
+  .rank-row .rank-bar-fill.seg-coral-fill { background: var(--coral-600); }
+  .rank-card .rank-subtitle {
+    font-size: 11.5px; font-weight: 600; color: var(--ink-soft); margin: 14px 0 8px;
+    padding-left: 10px; border-left: 3px solid var(--line);
+  }
+  .rank-card .rank-subtitle.seg-teal { border-left-color: var(--teal-500); color: var(--teal-700); }
+  .rank-card .rank-subtitle.seg-coral { border-left-color: var(--coral-600); color: var(--coral-600); }
+  .rank-row .rank-value { text-align: right; line-height: 1.35; }
   .rank-row .rank-value { font-family: var(--mono); font-size: 11.5px; color: var(--ink-soft); white-space: nowrap; flex-shrink: 0; }
   .rank-row .rank-breakdown {
     display: flex; gap: 10px; font-size: 11px; color: var(--ink-soft); margin-top: 3px; font-family: var(--mono);
@@ -600,49 +609,72 @@ function renderRanking() {
   const rankingContainer = document.getElementById('rankingContainer');
   rankingContainer.innerHTML = '';
 
-  const rankMetric = handler.rankMetric || handler.metricFields[0];
-  const metricIdx = handler.metricFields.indexOf(rankMetric);
-  if (metricIdx === -1) { rankingBlock.classList.add('hidden'); return; }
-
   const anyData = state.activeSources.some(src => state.bySource[src].length > 0);
   if (!anyData) { rankingBlock.classList.add('hidden'); return; }
   rankingBlock.classList.remove('hidden');
+
+  const breakdown = handler.breakdownMetrics;
+
+  if (breakdown) {
+    // 依健保金額、自費金額分別排序前10大，並計算各自佔該來源該項目總額的百分比
+    state.activeSources.forEach(src => {
+      const rows = state.bySource[src];
+
+      const card = document.createElement('div');
+      card.className = 'rank-card';
+      let html = '<div class="rank-title">' + src + '</div>';
+
+      breakdown.forEach(b => {
+        const idx = handler.metricFields.indexOf(b.field);
+        const categoryTotal = rows.reduce((s, r) => s + r.metrics[idx], 0);
+        const top10 = [...rows].sort((x, y) => y.metrics[idx] - x.metrics[idx]).slice(0, 10);
+
+        html += '<div class="rank-subtitle seg-' + b.color + '">' + b.label + '金額　前 10 大（佔' + src + b.label + '總額百分比）</div>';
+        if (!top10.length) {
+          html += '<div style="font-size:12.5px;color:var(--ink-soft);margin-bottom:10px;">無資料</div>';
+        } else {
+          html += top10.map((r, i) => {
+            const val = r.metrics[idx];
+            const pct = categoryTotal > 0 ? Math.round((val / categoryTotal) * 1000) / 10 : 0;
+            const barPct = categoryTotal > 0 ? Math.max(val > 0 ? 2 : 0, Math.round((val / categoryTotal) * 100)) : 0;
+            return '<div class="rank-row' + (i < 3 ? ' top3' : '') + '">' +
+              '<div class="rank-num">' + (i + 1) + '</div>' +
+              '<div class="rank-body">' +
+                '<div class="rank-label" title="' + r.keyVals.join(' ') + '">' + r.keyVals.join(' ') + '</div>' +
+                '<div class="rank-bar-wrap"><div class="rank-bar-fill seg-' + b.color + '-fill" style="width:' + barPct + '%"></div></div>' +
+              '</div>' +
+              '<div class="rank-value">' + fmt(val) + '<br>（' + pct + '%）</div>' +
+            '</div>';
+          }).join('');
+        }
+      });
+
+      card.innerHTML = html;
+      rankingContainer.appendChild(card);
+    });
+    return;
+  }
+
+  // 無健保/自費細分的類型：維持原本依單一指標排序的呈現方式
+  const rankMetric = handler.rankMetric || handler.metricFields[0];
+  const metricIdx = handler.metricFields.indexOf(rankMetric);
+  if (metricIdx === -1) { rankingBlock.classList.add('hidden'); return; }
 
   state.activeSources.forEach(src => {
     const rows = state.bySource[src];
     const top10 = [...rows].sort((a, b) => b.metrics[metricIdx] - a.metrics[metricIdx]).slice(0, 10);
     const maxVal = top10.length ? top10[0].metrics[metricIdx] : 0;
 
-    const breakdown = handler.breakdownMetrics;
-    const breakdownIdxs = breakdown ? breakdown.map(b => handler.metricFields.indexOf(b.field)) : null;
-
     const rowsHtml = top10.map((r, i) => {
       const val = r.metrics[metricIdx];
       const pct = maxVal > 0 ? Math.max(4, Math.round((val / maxVal) * 100)) : 0;
-
-      let barHtml, breakdownHtml = '';
-      if (breakdown) {
-        const parts = breakdown.map((b, bi) => ({ ...b, val: r.metrics[breakdownIdxs[bi]] }));
-        const partsSum = parts.reduce((s, p) => s + p.val, 0) || 1;
-        barHtml = '<div class="rank-bar-wrap"><div class="rank-bar-fill" style="width:' + pct + '%">' +
-          parts.map(p => '<div class="rank-bar-seg seg-' + p.color + '" style="width:' + (p.val / partsSum * 100) + '%"></div>').join('') +
-          '</div></div>';
-        breakdownHtml = '<div class="rank-breakdown">' +
-          parts.map(p => {
-            const pctOfTotal = partsSum > 0 ? Math.round((p.val / partsSum) * 1000) / 10 : 0;
-            return '<span><span class="dot seg-' + p.color + '"></span>' + p.label + ' ' + fmt(p.val) + '（' + pctOfTotal + '%）</span>';
-          }).join('') +
-        '</div>';
-      } else {
-        barHtml = '<div class="rank-bar-wrap"><div class="rank-bar-fill" style="width:' + pct + '%"><div class="rank-bar"></div></div></div>';
-      }
+      const barHtml = '<div class="rank-bar-wrap"><div class="rank-bar-fill" style="width:' + pct + '%"><div class="rank-bar"></div></div></div>';
 
       return '<div class="rank-row' + (i < 3 ? ' top3' : '') + '">' +
         '<div class="rank-num">' + (i + 1) + '</div>' +
         '<div class="rank-body">' +
           '<div class="rank-label" title="' + r.keyVals.join(' ') + '">' + r.keyVals.join(' ') + '</div>' +
           barHtml +
-          breakdownHtml +
         '</div>' +
         '<div class="rank-value">' + fmt(val) + '</div>' +
       '</div>';
