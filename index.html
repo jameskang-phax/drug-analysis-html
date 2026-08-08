@@ -370,7 +370,7 @@ const REPORT_TYPES = [
     id: 'drug-analysis-summary',
     label: '藥品使用分析月報（依計價項，門診/住院/急診）',
     sourceOrder: ['門診', '住院', '急診'],
-    headerAliases: { '總數量': '總劑量', '總金額': '總額' },
+    headerAliases: { '總劑量': '總數量', '總額': '總金額' },
     detect: wb => wb.SheetNames.includes(SUMMARY_SHEET),
     getRows: wb => {
       const rows = sheetToRows(wb.Sheets[SUMMARY_SHEET]);
@@ -382,8 +382,8 @@ const REPORT_TYPES = [
       return SOURCES.includes(v) ? v : null;
     },
     keyFields: ['計價項'],
-    metricFields: ['總劑量', '總額'],
-    rankMetric: '總額',
+    metricFields: ['總數量', '總金額'],
+    rankMetric: '總金額',
     outputSheetSuffix: '藥品使用分析總計',
     extraSheets: wb => {
       if (!wb.SheetNames.includes(DETAIL_SHEET)) return [];
