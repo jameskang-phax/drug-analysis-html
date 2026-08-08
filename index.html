@@ -370,6 +370,7 @@ const REPORT_TYPES = [
     id: 'drug-analysis-summary',
     label: '藥品使用分析月報（依計價項，門診/住院/急診）',
     sourceOrder: ['門診', '住院', '急診'],
+    headerAliases: { '總數量': '總劑量', '總金額': '總額' },
     detect: wb => wb.SheetNames.includes(SUMMARY_SHEET),
     getRows: wb => {
       const rows = sheetToRows(wb.Sheets[SUMMARY_SHEET]);
@@ -529,7 +530,10 @@ function sheetToRows(ws) {
 }
 
 function processWithHandler(handler, wb) {
-  const { header, rows } = handler.getRows(wb);
+  let { header, rows } = handler.getRows(wb);
+  if (handler.headerAliases) {
+    header = header.map(h => handler.headerAliases[h] || h);
+  }
   const cleanRows = rows.filter(r => r.some(v => v !== null && v !== ''));
 
   const sourceIdx = header.indexOf(handler.sourceField);
