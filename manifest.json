@@ -1,7 +1,7 @@
 {
   "name": "藥物分析工作站",
   "short_name": "藥物分析",
-  "description": "麻豆新樓醫院藥劑科 · 抗生素使用分析月報整理工具",
+  "description": "麻豆新樓醫院藥劑科 · 藥物使用分析月報整理工具",
   "start_url": "./index.html",
   "scope": "./",
   "display": "standalone",
