@@ -428,6 +428,7 @@ const REPORT_TYPES = [
     label: '藥品明細金額統計（前20大品項）',
     sourceOrder: ['門診', '住院', '急診', '合計'],
     topN: 20,
+    chartLabelIndex: 0,
     detect: wb => {
       const first = wb.SheetNames[0];
       if (!first) return false;
@@ -821,6 +822,7 @@ function buildImageColumn(handler, src) {
 
   let barCharts;
   const topN = handler.topN || 10;
+  const chartLabel = r => handler.chartLabelIndex != null ? r.keyVals[handler.chartLabelIndex] : r.keyVals.join(' ');
   if (handler.breakdownMetrics) {
     barCharts = handler.breakdownMetrics.map(b => {
       const idx = handler.metricFields.indexOf(b.field);
@@ -828,7 +830,7 @@ function buildImageColumn(handler, src) {
       return {
         title: b.label + '金額　前' + topN + '大',
         color: b.color === 'teal' ? '#2c8a76' : '#c1622e',
-        items: topItems.map(r => ({ label: r.keyVals.join(' '), value: r.metrics[idx] }))
+        items: topItems.map(r => ({ label: chartLabel(r), value: r.metrics[idx] }))
       };
     });
   } else {
@@ -838,7 +840,7 @@ function buildImageColumn(handler, src) {
     barCharts = [{
       title: '依「' + rankMetric + '」　前' + topN + '大',
       color: '#2c8a76',
-      items: topItems.map(r => ({ label: r.keyVals.join(' '), value: r.metrics[idx] }))
+      items: topItems.map(r => ({ label: chartLabel(r), value: r.metrics[idx] }))
     }];
   }
 
